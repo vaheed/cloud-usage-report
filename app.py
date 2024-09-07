@@ -10,13 +10,14 @@ import base64
 from datetime import datetime
 import json
 import logging
+from collections import defaultdict
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Initialize Flask app and Redis connection
 app = Flask(__name__)
-app.secret_key = 'supersecretkey'  # Needed for flash messages
+app.secret_key = os.urandom(24)  # Use a more secure secret key
 r = redis.StrictRedis(host='redis', port=6379, db=0)
 
 # CloudStack API credentials
@@ -33,18 +34,13 @@ def generate_signature(params, secret_key):
 
 # Function to make API request to CloudStack
 def make_cloudstack_request(params):
-    params['apiKey'] = ACCESS_KEY
-    params['response'] = 'json'
-    signature = generate_signature(params, SECRET_KEY)
-    params['signature'] = signature
-    url = '{}?{}'.format(CLOUDSTACK_API_URL, urlencode(params))
-    
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)  # Add timeout
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        flash(f"Error fetching data from CloudStack: {e}", "error")
+        logger.error(f"Error fetching data from CloudStack: {e}")
+        flash(f"Error fetching data from CloudStack: {str(e)}", "error")
         return None
 
 # Function to get cached data from Redis
@@ -88,16 +84,16 @@ USAGE_TYPE_MAP = {
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        domain_id = request.form['domainID']
-        start_date = request.form['startdate']
-        end_date = request.form['enddate']
+        domain_id = request.form.get('domainID', '').strip()
+        start_date = request.form.get('startdate', '').strip()
+        end_date = request.form.get('enddate', '').strip()
         selected_usage_types = request.form.getlist('usageTypes')
 
         logger.debug(f"Received POST request with domain_id: {domain_id}, start_date: {start_date}, end_date: {end_date}, usage_types: {selected_usage_types}")
 
         if not domain_id or not start_date or not end_date:
             flash('All fields are required!', 'error')
-            return render_template('index.html')
+            return render_template('index.html', usage_types=USAGE_TYPE_MAP)
 
         try:
             start_datetime = datetime.strptime(start_date, '%Y-%m-%dT%H:%M')
@@ -106,7 +102,7 @@ def index():
                 raise ValueError("End date must be after start date")
         except ValueError as e:
             flash(f'Invalid date format or range: {str(e)}', 'error')
-            return render_template('index.html')
+            return render_template('index.html', usage_types=USAGE_TYPE_MAP)
 
         # Prepare parameters for the API call to get usage records
         params = {
@@ -117,11 +113,11 @@ def index():
         }
 
         # Check cache first
-        cache_key = f"usage_{domain_id}_{start_date}_{end_date}"
+        cache_key = f"usage_{domain_id}_{start_date}_{end_date}_{','.join(sorted(selected_usage_types))}"
         cached_data = get_cached_data(cache_key)
         if cached_data:
             logger.debug("Returning cached data")
-            return render_template('index.html', usage_data=cached_data)
+            return render_template('index.html', usage_data=cached_data, usage_types=USAGE_TYPE_MAP)
 
         # If not in cache, make the API call
         usage_data = make_cloudstack_request(params)
@@ -129,23 +125,17 @@ def index():
 
         if usage_data and 'listusagerecordsresponse' in usage_data:
             usage_records = usage_data['listusagerecordsresponse'].get('usagerecord', [])
-            processed_records = {}
+            processed_records = defaultdict(lambda: {'usage': 0, 'startdate': None, 'enddate': None})
             for record in usage_records:
                 usage_type = int(record.get('usagetype', 0))
                 if not selected_usage_types or USAGE_TYPE_MAP.get(usage_type, str(usage_type)) in selected_usage_types:
                     key = (record.get('description', 'N/A'), usage_type)
-                    if key not in processed_records:
-                        processed_records[key] = {
-                            'description': record.get('description', 'N/A'),
-                            'usage': float(record.get('usage', '0 Hrs').split()[0]),
-                            'usagetype': USAGE_TYPE_MAP.get(usage_type, str(usage_type)),
-                            'startdate': record.get('startdate', 'N/A'),
-                            'enddate': record.get('enddate', 'N/A')
-                        }
-                    else:
-                        processed_records[key]['usage'] += float(record.get('usage', '0 Hrs').split()[0])
-                        processed_records[key]['startdate'] = min(processed_records[key]['startdate'], record.get('startdate', 'N/A'))
-                        processed_records[key]['enddate'] = max(processed_records[key]['enddate'], record.get('enddate', 'N/A'))
+                    data = processed_records[key]
+                    data['description'] = record.get('description', 'N/A')
+                    data['usage'] += float(record.get('usage', '0 Hrs').split()[0])
+                    data['usagetype'] = USAGE_TYPE_MAP.get(usage_type, str(usage_type))
+                    data['startdate'] = min(data['startdate'] or record.get('startdate'), record.get('startdate', 'N/A'))
+                    data['enddate'] = max(data['enddate'] or record.get('enddate'), record.get('enddate', 'N/A'))
 
             processed_records = list(processed_records.values())
             for record in processed_records:

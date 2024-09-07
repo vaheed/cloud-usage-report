@@ -15,7 +15,7 @@
     <div class="container">
         <h1>CloudStack Usage Report</h1>
 
-        <form action="/" method="post">
+        <form action="/" method="post" onsubmit="return validateForm()">
             <div class="form-group">
                 <label for="domainID">Domain ID:</label>
                 <input type="text" id="domainID" name="domainID" required>
