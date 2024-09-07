@@ -1,0 +1,19 @@
+version: '3'
+
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - CLOUDSTACK_API_URL=${CLOUDSTACK_API_URL}
+      - CLOUDSTACK_ACCESS_KEY=${CLOUDSTACK_ACCESS_KEY}
+      - CLOUDSTACK_SECRET_KEY=${CLOUDSTACK_SECRET_KEY}
+    depends_on:
+      - redis
+    volumes:
+      - .:/usr/src/app
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"

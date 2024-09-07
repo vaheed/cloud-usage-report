@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudStack Usage Report</title>
+    <link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>CloudStack Usage Report</h1>
+
+        <form action="/" method="post">
+            <div class="form-group">
+                <label for="domainID">Domain ID:</label>
+                <input type="text" id="domainID" name="domainID" required>
+            </div>
+            <div class="form-group">
+                <label for="startdate">Start Date (with time):</label>
+                <input type="datetime-local" id="startdate" name="startdate" required>
+            </div>
+            <div class="form-group">
+                <label for="enddate">End Date (with time):</label>
+                <input type="datetime-local" id="enddate" name="enddate" required>
+            </div>
+            <div class="form-group">
+                <label for="usageTypes">Usage Types:</label>
+                <select id="usageTypes" name="usageTypes" multiple="multiple" style="width: 100%;">
+                    {% for code, name in usage_types.items() %}
+                        <option value="{{ name }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <input type="submit" value="Submit">
+        </form>
+
+        {% if usage_data %}
+        <h2>Usage Records</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Description</th>
+                    <th>Usage</th>
+                    <th>Usage Type</th>
+                    <th>Start Date</th>
+                    <th>End Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in usage_data %}
+                <tr>
+                    <td>{{ record.description }}</td>
+                    <td>{{ record.usage }}</td>
+                    <td>{{ record.usagetype }}</td>
+                    <td>{{ record.startdate }}</td>
+                    <td>{{ record.enddate }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="charts-container">
+            <div class="chart-item">
+                <h3>Usage Distribution</h3>
+                <canvas id="usageChart"></canvas>
+            </div>
+            <div class="chart-item">
+                <h3>Usage Types Distribution</h3>
+                <canvas id="usageTypeChart"></canvas>
+            </div>
+            <div class="chart-item">
+                <h3>Usage Over Time</h3>
+                <canvas id="usageTimeChart"></canvas>
+            </div>
+            <div class="chart-item">
+                <h3>Top 5 Resource Consumers</h3>
+                <canvas id="topConsumersChart"></canvas>
+            </div>
+        </div>
+
+        <script>
+            var usageData = {{ usage_data | tojson | safe }};
+            console.log("Usage data:", usageData);
+
+            if (usageData && usageData.length > 0) {
+                // Usage Distribution Chart (existing)
+                var ctx = document.getElementById('usageChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: usageData.map(record => record.description.substring(0, 30) + '...'),
+                        datasets: [{
+                            label: 'Usage (Hours)',
+                            data: usageData.map(record => parseFloat(record.usage.split(' ')[0])),
+                            backgroundColor: 'rgba(75, 192, 192, 0.6)'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Hours'
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // Usage Types Distribution Chart
+                var usageTypes = {};
+                usageData.forEach(record => {
+                    if (usageTypes[record.usagetype]) {
+                        usageTypes[record.usagetype] += parseFloat(record.usage.split(' ')[0]);
+                    } else {
+                        usageTypes[record.usagetype] = parseFloat(record.usage.split(' ')[0]);
+                    }
+                });
+
+                var ctx2 = document.getElementById('usageTypeChart').getContext('2d');
+                new Chart(ctx2, {
+                    type: 'pie',
+                    data: {
+                        labels: Object.keys(usageTypes),
+                        datasets: [{
+                            data: Object.values(usageTypes),
+                            backgroundColor: [
+                                'rgba(255, 99, 132, 0.8)',
+                                'rgba(54, 162, 235, 0.8)',
+                                'rgba(255, 206, 86, 0.8)',
+                                'rgba(75, 192, 192, 0.8)',
+                                'rgba(153, 102, 255, 0.8)',
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            title: {
+                                display: true,
+                                text: 'Usage Types Distribution'
+                            }
+                        }
+                    }
+                });
+
+                // Usage Over Time Chart
+                var timeData = usageData.map(record => ({
+                    x: new Date(record.startdate.replace("'T'", "T")),
+                    y: parseFloat(record.usage.split(' ')[0])
+                })).sort((a, b) => a.x - b.x);
+
+                var ctx3 = document.getElementById('usageTimeChart').getContext('2d');
+                new Chart(ctx3, {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: 'Usage Over Time',
+                            data: timeData,
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'day'
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Hours'
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // Top 5 Resource Consumers Chart
+                var sortedData = usageData.sort((a, b) => parseFloat(b.usage.split(' ')[0]) - parseFloat(a.usage.split(' ')[0])).slice(0, 5);
+
+                var ctx4 = document.getElementById('topConsumersChart').getContext('2d');
+                new Chart(ctx4, {
+                    type: 'bar',
+                    data: {
+                        labels: sortedData.map(record => record.description.substring(0, 30) + '...'),
+                        datasets: [{
+                            label: 'Usage (Hours)',
+                            data: sortedData.map(record => parseFloat(record.usage.split(' ')[0])),
+                            backgroundColor: 'rgba(255, 159, 64, 0.8)'
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        scales: {
+                            x: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Hours'
+                                }
+                            }
+                        }
+                    }
+                });
+
+            } else {
+                console.log("No usage data available");
+                document.querySelectorAll('.chart-item canvas').forEach(canvas => {
+                    canvas.innerHTML = 'No usage data available';
+                });
+            }
+        </script>
+        {% else %}
+        <p>No usage data available. Please submit the form to fetch data.</p>
+        {% endif %}
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            $('#usageTypes').select2({
+                placeholder: "Select usage types",
+                allowClear: true
+            });
+        });
+    </script>
+</body>
+</html>
